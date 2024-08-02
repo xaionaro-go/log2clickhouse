@@ -1,4 +1,4 @@
-package put2ch
+package log2clickhouse
 
 import (
 	"bytes"

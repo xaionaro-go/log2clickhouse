@@ -3,14 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"strings"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"strings"
 
-	"github.com/trafficstars/put2ch"
+	"github.com/xaionaro-go/log2clickhouse"
 )
 
 func fatalIf(err error) {
@@ -21,12 +21,12 @@ func fatalIf(err error) {
 	log.Fatal(err)
 }
 
-func newInput(reader io.ReadCloser, rowsChannel chan *put2ch.Row, inputFormat, tableName, dataColumnName, dateColumnName, tryParseJSONInFields string, logger put2ch.Logger) io.Closer {
+func newInput(reader io.ReadCloser, rowsChannel chan *log2clickhouse.Row, inputFormat, tableName, dataColumnName, dateColumnName, tryParseJSONInFields string, logger log2clickhouse.Logger) io.Closer {
 	switch inputFormat {
 	case `json`:
-		return put2ch.NewInputJSON(reader, rowsChannel, tableName, dateColumnName, strings.Split(tryParseJSONInFields, ","), logger)
+		return log2clickhouse.NewInputJSON(reader, rowsChannel, tableName, dateColumnName, strings.Split(tryParseJSONInFields, ","), logger)
 	case `rawjson`:
-		return put2ch.NewInputRawJSON(reader, rowsChannel, tableName, dataColumnName, dateColumnName, logger)
+		return log2clickhouse.NewInputRawJSON(reader, rowsChannel, tableName, dataColumnName, dateColumnName, logger)
 	default:
 		log.Fatalf(`unknown input format: "%v"`, inputFormat)
 	}
@@ -45,7 +45,7 @@ func main() {
 	var chDSN = flag.String(`ch-dsn`, `tcp://127.0.0.1:9000`, `DSN for the ClickHouse connection (default: "tcp://127.0.0.1:9000")`)
 	flag.Parse()
 
-	rowsChannel := make(chan *put2ch.Row, 65536)
+	rowsChannel := make(chan *log2clickhouse.Row, 65536)
 
 	if *udpPort >= 0 {
 		conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: *udpPort})
@@ -74,7 +74,7 @@ func main() {
 		}()
 	}
 
-	chInserter, err := put2ch.NewCHInserter(*chDSN, rowsChannel, &logger{})
+	chInserter, err := log2clickhouse.NewCHInserter(*chDSN, rowsChannel, &logger{})
 	fatalIf(err)
 	fatalIf(chInserter.Loop())
 }

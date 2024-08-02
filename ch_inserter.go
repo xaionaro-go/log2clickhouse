@@ -1,11 +1,12 @@
-package put2ch
+package log2clickhouse
 
 import (
 	"database/sql"
+	"fmt"
 	"sort"
 	"time"
 
-	_ "github.com/kshvakov/clickhouse"
+	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/xaionaro-go/errors"
 	"github.com/xaionaro-go/spinlock"
 )
@@ -24,12 +25,7 @@ type CHInserter struct {
 	DB        *sql.DB
 	Logger    Logger
 
-	sqlStatementGeneratorCache sqlStatementGeneratorCache
-
 	tableStructureByName map[string]*tableStructure
-}
-
-type sqlStatementGeneratorCache struct {
 }
 
 func NewCHInserter(dsn string, rowsChan chan *Row, logger Logger) (*CHInserter, error) {
@@ -70,8 +66,6 @@ func (ch *CHInserter) Loop() error {
 			return ErrTooMuchRowsInQueue.Wrap(ch.LastError)
 		}
 	}
-
-	return nil
 }
 
 func (ch *CHInserter) GetQueueLength() (result uint) {
@@ -138,7 +132,7 @@ const (
 )
 
 type tableColumn struct {
-	Name string
+	Name      string
 	ValueType columnValueType
 }
 type tableColumns []*tableColumn
@@ -209,7 +203,7 @@ func (ch *CHInserter) getTableStructure(tableName string) *tableStructure {
 	return r
 }
 
-func (ch *CHInserter) fixTableStructureForRow (row *Row) {
+func (ch *CHInserter) fixTableStructureForRow(row *Row) {
 	tableStructure := ch.getTableStructure(row.GetTableName())
 
 	var columnsToAdd tableColumns
@@ -229,7 +223,7 @@ func (ch *CHInserter) fixTableStructureForRow (row *Row) {
 		column := tableStructure.Columns.SearchByName(columnName)
 		if column == nil {
 			column = &tableColumn{
-				Name: columnName,
+				Name:      columnName,
 				ValueType: valueType,
 			}
 			columnsToAdd = append(columnsToAdd, column)
@@ -254,7 +248,7 @@ func (ch *CHInserter) fixTableStructureForRow (row *Row) {
 		default:
 			continue
 		}
-		query := "ALTER TABLE "+row.GetTableName()+" ADD COLUMN `" + column.Name + "` Nullable(" + chValueTypeName+")"
+		query := "ALTER TABLE " + row.GetTableName() + " ADD COLUMN `" + column.Name + "` Nullable(" + chValueTypeName + ")"
 		ch.Logger.Info(`adding column:`, query)
 		_, err := ch.DB.Exec(query)
 		if err != nil {
@@ -279,7 +273,7 @@ func (ch *CHInserter) insert(rows []*Row) (result error) {
 	for _, row := range rows {
 		ch.fixTableStructureForRow(row)
 		if row.GetTableName() != rowSample.GetTableName() {
-			return errors.NotImplemented.New("multiple tables are not supported, yet")
+			return fmt.Errorf("%w: multiple tables are not supported, yet", errors.NotImplemented)
 		}
 	}
 

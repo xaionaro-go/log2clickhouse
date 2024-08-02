@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/trafficstars/put2ch"
+	"github.com/xaionaro-go/log2clickhouse"
 )
 
 const (
@@ -11,7 +11,7 @@ const (
 )
 
 var (
-	_ put2ch.Logger = &logger{}
+	_ log2clickhouse.Logger = &logger{}
 )
 
 type logger struct {

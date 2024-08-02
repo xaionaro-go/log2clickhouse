@@ -1,7 +1,6 @@
-package put2ch
+package log2clickhouse
 
 import (
-	//json "github.com/francoispqt/gojay"
 	"encoding/json"
 	"io"
 	"net"

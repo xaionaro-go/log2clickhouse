@@ -1,7 +1,6 @@
-package put2ch
+package log2clickhouse
 
 import (
-	// json "github.com/francoispqt/gojay"
 	"encoding/json"
 	"io"
 	"net"
@@ -17,7 +16,7 @@ type InputJSON struct {
 
 	TableName string
 
-	OutChan chan *Row
+	OutChan        chan *Row
 	DateColumnName string
 
 	TryParseJSONInFields []string
@@ -66,8 +65,7 @@ func (l *InputJSON) addMsgToRow(row *Row, msg map[string]interface{}, prefix str
 			if i, err := v.Int64(); err == nil {
 				row.values = append(row.values, i)
 				postfix = `.int`
-			} else
-			if f, err := v.Float64(); err == nil {
+			} else if f, err := v.Float64(); err == nil {
 				row.values = append(row.values, f)
 				postfix = `.float`
 			} else {
@@ -86,7 +84,7 @@ func (l *InputJSON) addMsgToRow(row *Row, msg map[string]interface{}, prefix str
 				if shouldTryParseJSON {
 					subMsg := map[string]interface{}{}
 					if json.Unmarshal([]byte(v), &subMsg) == nil {
-						l.addMsgToRow(row, subMsg,prefix+k+`.`)
+						l.addMsgToRow(row, subMsg, prefix+k+`.`)
 						continue
 					}
 				}
@@ -99,7 +97,7 @@ func (l *InputJSON) addMsgToRow(row *Row, msg map[string]interface{}, prefix str
 		default:
 			continue
 		}
-		columnName := strings.Map(func (r rune) rune {
+		columnName := strings.Map(func(r rune) rune {
 			switch {
 			case (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
 				return r
