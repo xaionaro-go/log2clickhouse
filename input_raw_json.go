@@ -21,7 +21,15 @@ type InputRawJSON struct {
 	isRunning bool
 }
 
-func NewInputRawJSON(reader io.ReadCloser, OutChan chan *Row, tableName, dataColumnName, dateColumnName string, logger Logger) *InputRawJSON {
+func NewInputRawJSON(
+	reader io.ReadCloser,
+	OutChan chan *Row,
+	tableName string,
+	dataColumnName string,
+	dateColumnName string,
+	nanosecondsColumnName string,
+	logger Logger,
+) *InputRawJSON {
 	input := &InputRawJSON{}
 
 	if logger == nil {
@@ -33,11 +41,19 @@ func NewInputRawJSON(reader io.ReadCloser, OutChan chan *Row, tableName, dataCol
 
 	input.Reader = reader
 	input.TableName = tableName
-	input.Columns = []string{dateColumnName, dataColumnName}
+	input.Columns = []string{dateColumnName}
+	if nanosecondsColumnName != "" {
+		input.Columns = append(input.Columns, nanosecondsColumnName)
+	}
+	input.Columns = append(input.Columns, dataColumnName)
 
 	input.start()
 
 	return input
+}
+
+func (l *InputRawJSON) isNanoTSEnabled() bool {
+	return len(l.Columns) == 3
 }
 
 func (l *InputRawJSON) start() {
@@ -79,18 +95,27 @@ func (l *InputRawJSON) loop() {
 			decoder = json.NewDecoder(l.Reader)
 			continue
 		}
+		now := time.Now()
 
 		row := NewRow()
 		row.tableName = l.TableName
 		row.columns = l.Columns
-		row.values = []interface{}{time.Now(), string(msg)}
+		if l.isNanoTSEnabled() {
+			row.values = []interface{}{now, now.UnixNano(), string(msg)}
+		} else {
+			row.values = []interface{}{now, string(msg)}
+		}
 		l.Logger.Trace(`Q`)
-		l.OutChan <- row
+		select {
+		case l.OutChan <- row:
+		default:
+			l.Logger.Error("the queue is busy")
+		}
 		l.Logger.Trace(`/Q`)
 	}
 }
 
 func (l *InputRawJSON) Close() error {
 	l.isRunning = false
-	return l.Close()
+	return l.Reader.Close()
 }

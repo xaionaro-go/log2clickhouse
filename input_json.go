@@ -16,15 +16,25 @@ type InputJSON struct {
 
 	TableName string
 
-	OutChan        chan *Row
-	DateColumnName string
+	OutChan chan *Row
+
+	DateColumnName        string
+	NanosecondsColumnName string
 
 	TryParseJSONInFields []string
 
 	isRunning bool
 }
 
-func NewInputJSON(reader io.ReadCloser, OutChan chan *Row, tableName, dateColumnName string, tryParseJSONInFields []string, logger Logger) *InputJSON {
+func NewInputJSON(
+	reader io.ReadCloser,
+	OutChan chan *Row,
+	tableName string,
+	dateColumnName string,
+	nanosecondsColumnName string,
+	tryParseJSONInFields []string,
+	logger Logger,
+) *InputJSON {
 	input := &InputJSON{}
 
 	if logger == nil {
@@ -37,12 +47,16 @@ func NewInputJSON(reader io.ReadCloser, OutChan chan *Row, tableName, dateColumn
 	input.Reader = reader
 	input.TableName = tableName
 	input.DateColumnName = dateColumnName
+	input.NanosecondsColumnName = nanosecondsColumnName
 
 	for _, fieldName := range tryParseJSONInFields {
 		if fieldName == `` {
 			continue
 		}
-		input.TryParseJSONInFields = append(input.TryParseJSONInFields, fieldName)
+		input.TryParseJSONInFields = append(
+			input.TryParseJSONInFields,
+			strings.Trim(fieldName, " "),
+		)
 	}
 
 	input.start()
@@ -154,16 +168,26 @@ func (l *InputJSON) loop() {
 
 		row := NewRow()
 		row.tableName = l.TableName
-		row.columns = []string{l.DateColumnName}
-		row.values = []interface{}{time.Now()}
+		now := time.Now()
+		if l.NanosecondsColumnName != "" {
+			row.columns = []string{l.NanosecondsColumnName, l.DateColumnName}
+			row.values = []interface{}{now.UnixNano(), now}
+		} else {
+			row.columns = []string{l.DateColumnName}
+			row.values = []interface{}{now}
+		}
 		l.addMsgToRow(row, msg, ``)
 		l.Logger.Trace(`Q`)
-		l.OutChan <- row
+		select {
+		case l.OutChan <- row:
+		default:
+			l.Logger.Error("the queue is busy")
+		}
 		l.Logger.Trace(`/Q`)
 	}
 }
 
 func (l *InputJSON) Close() error {
 	l.isRunning = false
-	return l.Close()
+	return l.Reader.Close()
 }

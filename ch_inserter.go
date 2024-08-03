@@ -6,21 +6,18 @@ import (
 	"sort"
 	"time"
 
-	_ "github.com/ClickHouse/clickhouse-go"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/xaionaro-go/errors"
-	"github.com/xaionaro-go/spinlock"
 )
 
 const (
-	defaultBunchSize = 10000
+	defaultBatchSize = 10000
 )
 
 type CHInserter struct {
-	spinlock.Locker
-
 	RowsChan  chan *Row
 	Queue     Rows
-	BunchSize uint
+	BatchSize uint
 	LastError error
 	DB        *sql.DB
 	Logger    Logger
@@ -28,11 +25,26 @@ type CHInserter struct {
 	tableStructureByName map[string]*tableStructure
 }
 
-func NewCHInserter(dsn string, rowsChan chan *Row, logger Logger) (*CHInserter, error) {
-	db, err := sql.Open("clickhouse", dsn)
-	if err != nil {
-		return nil, errors.Wrap(err)
-	}
+func NewCHInserter(
+	addr string,
+	dbName string,
+	user string,
+	pass string,
+	rowsChan chan *Row,
+	logger Logger,
+) (*CHInserter, error) {
+	db := clickhouse.OpenDB(&clickhouse.Options{
+		Addr: []string{addr},
+		Auth: clickhouse.Auth{
+			Database: dbName,
+			Username: user,
+			Password: pass,
+		},
+		Debug: false,
+		Debugf: func(format string, v ...any) {
+			logger.Trace(fmt.Sprintf(format, v...))
+		},
+	})
 	if err := db.Ping(); err != nil {
 		return nil, errors.Wrap(err)
 	}
@@ -44,51 +56,55 @@ func NewCHInserter(dsn string, rowsChan chan *Row, logger Logger) (*CHInserter, 
 	return &CHInserter{
 		DB:        db,
 		RowsChan:  rowsChan,
-		BunchSize: defaultBunchSize,
+		BatchSize: defaultBatchSize,
 		Logger:    logger,
 
 		tableStructureByName: map[string]*tableStructure{},
 	}, nil
 }
 
-func (ch *CHInserter) Loop() error {
+func (ch *CHInserter) Loop(flushInterval time.Duration) error {
+	t := time.NewTicker(flushInterval)
+	defer t.Stop()
 	for {
 		ch.Logger.Trace(`L`)
-		row := <-ch.RowsChan
-		ch.Logger.Trace(`/L`)
-
-		err := ch.PushToQueue(row)
-		if err != nil {
-			return errors.Wrap(err)
-		}
-
-		if ch.GetQueueLength() > ch.BunchSize*2 {
-			return ErrTooMuchRowsInQueue.Wrap(ch.LastError)
+		select {
+		case <-t.C:
+			ch.Logger.Trace(`F`)
+			err := ch.flush()
+			if err != nil {
+				return errors.Wrap(err)
+			}
+		case row := <-ch.RowsChan:
+			ch.Logger.Trace(`R`)
+			err := ch.pushToQueue(row)
+			if err != nil {
+				return errors.Wrap(err)
+			}
 		}
 	}
 }
 
-func (ch *CHInserter) GetQueueLength() (result uint) {
-	ch.LockDo(func() {
-		result = uint(len(ch.Queue))
-	})
-	return
+func (ch *CHInserter) flush() error {
+	err := ch.insert(ch.Queue)
+	if err != nil {
+		return errors.Wrap(err)
+	}
+	ch.Queue.Release()
+	return nil
 }
 
-func (ch *CHInserter) PushToQueue(rows ...*Row) (err error) {
-	ch.LockDo(func() {
-		ch.Queue = append(ch.Queue, rows...)
-		if uint(len(ch.Queue)) < ch.BunchSize {
-			return
-		}
+func (ch *CHInserter) pushToQueue(rows ...*Row) error {
+	ch.Queue = append(ch.Queue, rows...)
+	if uint(len(ch.Queue)) < ch.BatchSize {
+		return nil
+	}
 
-		err = ch.insert(ch.Queue)
-		if err == nil {
-			ch.Queue.Release()
-		}
-	})
-
-	return
+	err := ch.flush()
+	if err != nil {
+		return errors.Wrap(err)
+	}
+	return nil
 }
 
 func (ch *CHInserter) getStatementString(row *Row) string {
@@ -173,9 +189,9 @@ func (ch *CHInserter) getTableStructure(tableName string) *tableStructure {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var columnValueTypeName, defaultType, extraArg1, extraArg2, extraArg3 string
+		var columnValueTypeName, defaultType, extraArg1, extraArg2, extraArg3, extraArg4 string
 		column := &tableColumn{}
-		err = rows.Scan(&column.Name, &columnValueTypeName, &defaultType, &extraArg1, &extraArg2, &extraArg3)
+		err = rows.Scan(&column.Name, &columnValueTypeName, &defaultType, &extraArg1, &extraArg2, &extraArg3, &extraArg4)
 		if err != nil {
 			panic(err)
 		}
@@ -257,9 +273,7 @@ func (ch *CHInserter) fixTableStructureForRow(row *Row) {
 	}
 
 	if len(columnsToAdd) != 0 {
-		//ch.Lock()
 		ch.tableStructureByName[row.GetTableName()] = nil
-		//ch.Unlock()
 	}
 }
 

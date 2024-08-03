@@ -6,7 +6,7 @@ import (
 	"github.com/xaionaro-go/log2clickhouse"
 )
 
-const (
+var (
 	isTracingEnabled = false
 )
 
